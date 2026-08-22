@@ -3,6 +3,10 @@ obj/
 dist/
 wiki-clone/
 *.tar
+node_modules/
+src/OttoWikiMcp.Frontend/dist/
+# wwwroot é o build do Vite copiado no Dockerfile — gerado, não fonte.
+src/OttoWikiMcp.McpServer/wwwroot/
 
 # fake-azure-wiki/ é seu próprio repo git (simula o backend git de uma Wiki do
 # Azure DevOps) — não faz sentido git subir isso como submodule aqui. Ver

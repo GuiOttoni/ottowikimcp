@@ -1,4 +1,5 @@
 using Microsoft.SemanticKernel;
+using OttoWikiMcp.McpServer.Endpoints;
 using OttoWikiMcp.McpServer.Plugins;
 using OttoWikiMcp.McpServer.Services;
 using OttoWikiMcp.McpServer.Tools;
@@ -36,8 +37,11 @@ builder.Services
 
 var app = builder.Build();
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.MapGet("/healthz", () => Results.Ok(new { ok = true }));
 app.MapMcp("/mcp");
+app.MapApiEndpoints();
 
 // Garante que a wiki está clonada antes de aceitar tráfego (a primeira tentativa de clone,
 // contra uma wiki real do Azure DevOps, é o momento em que o Git Credential Manager abriria o

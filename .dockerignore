@@ -1,2 +1,5 @@
 **/bin/
 **/obj/
+**/node_modules/
+src/OttoWikiMcp.Frontend/dist/
+src/OttoWikiMcp.McpServer/wwwroot/

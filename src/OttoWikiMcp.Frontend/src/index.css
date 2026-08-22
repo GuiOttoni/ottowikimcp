@@ -1,0 +1,26 @@
+:root {
+  --bg: #060003;
+  --bg2: #0d0006;
+  --card: #130008;
+  --card-hover: #1a000c;
+  --border: #2a0410;
+  --border-bright: #4a0820;
+  --text: #f5b0c0;
+  --text2: #8a3850;
+  --text3: #5a1830;
+  --accent: #ff1f3d;
+  --gold: #ffb000;
+  --mono: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  min-height: 100vh;
+}
+
+a { color: inherit; }
