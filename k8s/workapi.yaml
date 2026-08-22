@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workapi
+  namespace: ottowikimcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: workapi }
+  template:
+    metadata:
+      labels: { app: workapi }
+    spec:
+      containers:
+        - name: workapi
+          image: ottowikimcp-workapi:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          resources:
+            requests: { cpu: "10m", memory: "48Mi" }
+            limits: { cpu: "200m", memory: "128Mi" }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workapi
+  namespace: ottowikimcp
+spec:
+  selector: { app: workapi }
+  ports:
+    - port: 8080
+      targetPort: 8080

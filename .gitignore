@@ -1,0 +1,10 @@
+bin/
+obj/
+dist/
+wiki-clone/
+*.tar
+
+# fake-azure-wiki/ é seu próprio repo git (simula o backend git de uma Wiki do
+# Azure DevOps) — não faz sentido git subir isso como submodule aqui. Ver
+# scripts/seed-fake-wiki.sh para recriá-lo do zero.
+fake-azure-wiki/
