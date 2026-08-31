@@ -10,4 +10,13 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Dados reais de fundos (CVM Dados Abertos + BrasilAPI), "baked" em JSON — ver FundosData.cs.
+         Precisa ser copiado pro diretório de saída (dev e publish/Docker) pra ser lido em runtime. -->
+    <Content Update="Data\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

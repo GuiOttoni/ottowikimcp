@@ -7,11 +7,11 @@ namespace OttoWikiMcp.WorkApiMock.Controllers;
 public sealed class TicketsController : ControllerBase
 {
     [HttpGet]
-    public ActionResult<IEnumerable<Ticket>> List([FromQuery] TicketStatus? status, [FromQuery] int? institutionId)
+    public ActionResult<IEnumerable<Ticket>> List([FromQuery] TicketStatus? status, [FromQuery] int? instituicaoId)
     {
         var query = FakeData.Tickets.AsEnumerable();
         if (status is not null) query = query.Where(t => t.Status == status);
-        if (institutionId is not null) query = query.Where(t => t.InstitutionId == institutionId);
+        if (instituicaoId is not null) query = query.Where(t => t.InstituicaoId == instituicaoId);
         return Ok(query.OrderByDescending(t => t.CreatedAt));
     }
 

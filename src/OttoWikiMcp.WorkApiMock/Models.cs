@@ -16,11 +16,9 @@ public enum TicketPriority
     Critica,
 }
 
-public sealed record Institution(int Id, string Name, string Plan, DateOnly OnboardedOn);
-
 public sealed record Ticket(
     int Id,
-    int InstitutionId,
+    int InstituicaoId,
     string Subject,
     TicketStatus Status,
     TicketPriority Priority,
