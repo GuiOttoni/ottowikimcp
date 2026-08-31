@@ -10,7 +10,11 @@ POC de um MCP server em .NET 10 que expõe:
 Ver a proposta de arquitetura completa (versão "produção, no trabalho") em
 [`F:/Projetos/docs`](../../docs/docs/pesquisas/arquitetura-wiki-mcp-k8s.md) — esta POC é a
 implementação local de uma fatia dela, para validar a ideia antes de replicar no ambiente
-corporativo.
+corporativo. Documentos relacionados, também em `F:/Projetos/docs`:
+
+- [O que foi feito nesta rodada (escrita + "ask AI") e por quê](../../docs/docs/pesquisas/poc-otowikimcp-ask-e-escrita.md)
+- [Guia prático de replicação no PFS.Automation](../../docs/docs/pesquisas/guia-mcp-docs-pfs-automation.md)
+- [Boas práticas: MCP de escrita + RAG sobre wiki interna](../../docs/docs/pesquisas/boas-praticas-mcp-docs-rag.md)
 
 ## Por que sem PAT
 
@@ -50,6 +54,8 @@ OttoWikiMcp/
 | `get_wiki_page(path)` | Conteúdo completo de uma página |
 | `list_wiki_pages()` | Lista todas as páginas |
 | `sync_wiki()` | Força um `git pull` da wiki agora |
+| `update_wiki_page(path, content)` | Cria/edita o conteúdo de uma página e commita a mudança no clone local |
+| `ask_wiki(question)` | Pergunta em linguagem natural sobre a wiki (ver seção "Ask" abaixo — mock, sem LLM real) |
 | `list_tickets(status?, institutionId?)` | Lista tickets, com filtro opcional |
 | `get_ticket(id)` | Um ticket específico |
 | `list_institutions()` | Lista instituições clientes |
@@ -59,6 +65,23 @@ A busca na wiki hoje é **por substring simples** (case-insensitive), não semâ
 `WikiPlugin` já está modelado como plugin de Semantic Kernel de propósito: para evoluir para
 busca semântica real (embeddings + um conector de LLM/Azure OpenAI), a interface das tools MCP
 não muda — só a implementação interna de `SearchWiki`.
+
+## Escrita na wiki (`update_wiki_page`)
+
+`update_wiki_page` escreve o arquivo `.md` no clone local (`Services/GitWikiSync.cs`) e faz
+`git add -A` + `git commit` **só no clone local** — contra o "remoto" (`fake-azure-wiki/` nesta
+POC), a mudança não é publicada. Contra uma Wiki real do Azure DevOps, seria preciso um `git push`
+adicional depois do commit (ver o guia de implementação para esse passo num ambiente real, onde
+push provavelmente exige revisão/PR antes de ir pra branch principal da wiki). A tool valida que o
+`path` não escapa da raiz da wiki (sem `../../`) antes de escrever.
+
+## "Perguntar à IA" (`ask_wiki`) — mock nesta POC
+
+`Services/WikiAskService.cs` reusa `search_wiki` (busca por substring) e devolve os trechos
+encontrados com uma frase de abertura, citando as páginas-fonte — **sem chamar nenhum LLM de
+verdade**. Isso valida o fluxo pergunta → busca → resposta com citação sem custo nem chave de API.
+A escolha do LLM real para o ambiente de trabalho (Azure OpenAI, gateway interno, etc.) fica em
+aberto — ver a seção "IA do ask" do guia de implementação para o PFS.Automation.
 
 ## Recriando a wiki fake
 
@@ -71,13 +94,18 @@ bash scripts/seed-fake-wiki.sh
 
 ## Rodando localmente
 
+`Wiki:RepoUrl` não vem com um valor padrão no `appsettings.json` (de propósito — é um caminho de
+máquina, não deveria ir versionado). Rode `scripts/seed-fake-wiki.sh` primeiro (ver acima) e
+aponte pra pasta gerada:
+
 ```bash
 # Terminal 1 — API fake de trabalho
 cd src/OttoWikiMcp.WorkApiMock
 dotnet run --urls http://localhost:5241
 
-# Terminal 2 — MCP server
+# Terminal 2 — MCP server (ajuste o caminho pro seu clone do repo)
 cd src/OttoWikiMcp.McpServer
+export Wiki__RepoUrl="file:///caminho/absoluto/pra/OttoWikiMcp/fake-azure-wiki"
 dotnet run --urls http://localhost:5250
 ```
 
@@ -91,21 +119,24 @@ curl -s -X POST http://localhost:5250/mcp \
 
 ## Deploy no Kubernetes (k3s da VPS)
 
-Sem registry: as imagens são exportadas com `docker save`, copiadas pra VPS via SCP e importadas
-direto no containerd do k3s com `k3s ctr images import` (single-node, dispensa um registry).
+As imagens vão pro Docker Hub (repositório público `guiottoni/ottowikimcp-*`) — o k3s da VPS só
+faz `docker pull` sozinho, sem SCP/SSH/`k3s ctr images import` manual. Configuração única:
 
 ```bash
-docker build -f src/OttoWikiMcp.WorkApiMock/Dockerfile -t ottowikimcp-workapi:latest src/OttoWikiMcp.WorkApiMock
-docker build -f src/OttoWikiMcp.McpServer/Dockerfile -t ottowikimcp-server:latest .
-
-docker save ottowikimcp-workapi:latest -o dist/workapi.tar
-docker save ottowikimcp-server:latest -o dist/mcpserver.tar
-# scp dist/*.tar pra VPS, depois na VPS: k3s ctr images import workapi.tar (e mcpserver.tar)
-
-kubectl --context vps70119-k3s apply -f k8s/namespace.yaml
-kubectl --context vps70119-k3s apply -f k8s/workapi.yaml
-kubectl --context vps70119-k3s apply -f k8s/mcpserver.yaml
+docker login -u guiottoni   # uma vez só, salva a credencial local
+kubectl --context vps70119-k3s apply -f k8s/namespace.yaml   # só na primeira vez
 ```
+
+Depois disso, toda atualização é só:
+
+```bash
+bash scripts/deploy.sh
+```
+
+`scripts/deploy.sh` builda as duas imagens, dá `docker push` e roda
+`kubectl rollout restart` nos dois deployments (que têm `imagePullPolicy: Always`, então sempre
+puxam o `:latest` mais recente do registry ao reiniciar). Os manifests (`k8s/*.yaml`) já apontam
+pra `docker.io/guiottoni/ottowikimcp-*:latest`.
 
 O MCP server fica exposto via `NodePort` em `:30880` — ou seja, de fora do cluster:
 `http://<ip-da-vps>:30880/mcp`.

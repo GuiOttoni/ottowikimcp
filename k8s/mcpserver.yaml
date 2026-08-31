@@ -13,8 +13,8 @@ spec:
     spec:
       containers:
         - name: mcpserver
-          image: ottowikimcp-server:latest
-          imagePullPolicy: Never
+          image: docker.io/guiottoni/ottowikimcp-server:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:
@@ -25,6 +25,15 @@ spec:
             # troque só esta variável (nenhum código muda):
             # - name: Wiki__RepoUrl
             #   value: https://dev.azure.com/{org}/{project}/_git/{project}.wiki
+            # Chave do Gemini pro ask_wiki (RAG com LLM real) — NUNCA em texto plano aqui.
+            # Vem de um Secret criado à parte (kubectl create secret, não versionado):
+            #   kubectl -n ottowikimcp create secret generic mcpserver-secrets \
+            #     --from-literal=gemini-api-key=<chave>
+            # `optional: true` faz o pod subir normalmente mesmo sem o Secret — nesse caso
+            # ask_wiki cai pro mock determinístico (ver Program.cs).
+            - name: Gemini__ApiKey
+              valueFrom:
+                secretKeyRef: { name: mcpserver-secrets, key: gemini-api-key, optional: true }
           resources:
             requests: { cpu: "10m", memory: "64Mi" }
             limits: { cpu: "300m", memory: "192Mi" }

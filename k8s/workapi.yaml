@@ -13,13 +13,15 @@ spec:
     spec:
       containers:
         - name: workapi
-          image: ottowikimcp-workapi:latest
-          imagePullPolicy: Never
+          image: docker.io/guiottoni/ottowikimcp-workapi:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           resources:
-            requests: { cpu: "10m", memory: "48Mi" }
-            limits: { cpu: "200m", memory: "128Mi" }
+            # Carrega em memória um índice de busca de fundos reais (~34 mil registros, ~8MB de
+            # JSON) — 128Mi estourava OutOfMemoryException nesse carregamento. 256Mi dá folga.
+            requests: { cpu: "10m", memory: "64Mi" }
+            limits: { cpu: "200m", memory: "256Mi" }
           readinessProbe:
             httpGet: { path: /healthz, port: 8080 }
             initialDelaySeconds: 3
