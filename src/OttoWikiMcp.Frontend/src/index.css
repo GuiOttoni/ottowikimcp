@@ -1,16 +1,44 @@
+@import "tailwindcss";
+
+/*
+ * Paleta em duas camadas de propósito:
+ *  1. `:root { --bg, --accent, ... }` — os tokens "crus" que o app inteiro já usava via
+ *     `style={{ color: "var(--accent)" }}` (centenas de ocorrências em Dashboard/Docs/ui.tsx) —
+ *     mantidos pra não forçar uma reescrita completa de tudo isso pra Tailwind de uma vez.
+ *  2. `@theme { --color-accent, ... }` — os MESMOS valores, expostos no namespace de cores que o
+ *     Tailwind v4 entende, então classes utilitárias novas (`bg-accent`, `text-gold`,
+ *     `border-border`) funcionam em qualquer markup novo/atualizado. As duas camadas apontam pro
+ *     mesmo valor de cor — não são paletas diferentes, só dois jeitos de referenciar a mesma.
+ *
+ * Vermelho ajustado pra um tom mais pastel/suave (era #ff1f3d, saturado e "neon") — mantém a
+ * identidade "hacker terminal" vermelho/dourado do app, só menos agressivo aos olhos.
+ */
 :root {
-  --bg: #060003;
-  --bg2: #0d0006;
-  --card: #130008;
-  --card-hover: #1a000c;
-  --border: #2a0410;
-  --border-bright: #4a0820;
-  --text: #f5b0c0;
-  --text2: #8a3850;
-  --text3: #5a1830;
-  --accent: #ff1f3d;
-  --gold: #ffb000;
+  --bg: #0a0407;
+  --bg2: #140810;
+  --card: #1c0b16;
+  --card-hover: #26101e;
+  --border: #3a1420;
+  --border-bright: #5c2233;
+  --text: #f0bcc8;
+  --text2: #a06478;
+  --text3: #6e3f4e;
+  --accent: #e0637a;
+  --gold: #e8b256;
   --mono: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+}
+
+@theme {
+  --color-bg: #0a0407;
+  --color-bg2: #140810;
+  --color-card: #1c0b16;
+  --color-border: #3a1420;
+  --color-border-bright: #5c2233;
+  --color-text: #f0bcc8;
+  --color-text2: #a06478;
+  --color-accent: #e0637a;
+  --color-gold: #e8b256;
+  --font-mono: 'Cascadia Mono', Consolas, 'Courier New', monospace;
 }
 
 * { box-sizing: border-box; }
@@ -24,3 +52,81 @@ body {
 }
 
 a { color: inherit; }
+
+/* Scrollbar customizada (Chromium/Edge/Safari) — combina com o tema em vez do padrão do SO. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-bright) var(--bg2);
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-track {
+  background: var(--bg2);
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-bright);
+  border-radius: 5px;
+  border: 2px solid var(--bg2);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* Tabelas responsivas: em telas estreitas, o container rola horizontalmente em vez de espremer
+   colunas/quebrar texto em várias linhas. */
+.table-scroll {
+  overflow-x: auto;
+}
+.table-scroll table {
+  min-width: 640px;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  color: var(--gold);
+  line-height: 1.3;
+}
+.markdown-body h1 { font-size: 1.5em; margin: 0 0 0.6em; }
+.markdown-body h2 { font-size: 1.25em; margin: 1.2em 0 0.5em; }
+.markdown-body h3 { font-size: 1.05em; margin: 1em 0 0.4em; }
+.markdown-body p { margin: 0 0 0.8em; }
+.markdown-body a { color: var(--accent); text-decoration: underline; }
+.markdown-body ul,
+.markdown-body ol { padding-left: 1.4em; margin: 0 0 0.8em; }
+.markdown-body li { margin: 0.2em 0; }
+.markdown-body code {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+.markdown-body pre {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  overflow-x: auto;
+}
+.markdown-body pre code { background: none; border: none; padding: 0; }
+.markdown-body blockquote {
+  margin: 0 0 0.8em;
+  padding: 2px 12px;
+  border-left: 3px solid var(--border-bright);
+  color: var(--text2);
+}
+.markdown-body table { border-collapse: collapse; margin: 0 0 0.8em; width: 100%; }
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border);
+  padding: 5px 8px;
+  text-align: left;
+  font-size: 0.95em;
+}
+.markdown-body th { color: var(--text2); }
+.markdown-body hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+.markdown-body .mermaid-diagram { margin: 0 0 0.8em; overflow-x: auto; }
+.markdown-body .mermaid-diagram svg { max-width: 100%; }
