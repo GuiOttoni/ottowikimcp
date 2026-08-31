@@ -41,7 +41,25 @@ public sealed class GitWikiSync(IConfiguration config, ILogger<GitWikiSync> logg
         }
     }
 
-    private async Task RunGitAsync(string workingDir, CancellationToken ct, params string[] args)
+    /// <summary>
+    /// Faz <c>git add -A</c> + <c>git commit</c> no clone local. Contra uma wiki real do Azure
+    /// DevOps, isso só publica a mudança de verdade depois de um <c>git push</c> adicional (fora
+    /// de escopo desta POC local, que roda contra um "remoto" em disco) — ver o guia de
+    /// implementação para o passo de push num ambiente real.
+    /// </summary>
+    public async Task CommitAllAsync(string message, CancellationToken ct = default)
+    {
+        await RunGitAsync(_localPath, ct, "add", "-A");
+        var status = await RunGitAsync(_localPath, ct, "status", "--porcelain");
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            logger.LogInformation("Nada para commitar (conteúdo salvo é igual ao já existente).");
+            return;
+        }
+        await RunGitAsync(_localPath, ct, "commit", "-m", message);
+    }
+
+    private async Task<string> RunGitAsync(string workingDir, CancellationToken ct, params string[] args)
     {
         var psi = new ProcessStartInfo("git")
         {
@@ -66,5 +84,6 @@ public sealed class GitWikiSync(IConfiguration config, ILogger<GitWikiSync> logg
         }
 
         if (!string.IsNullOrWhiteSpace(stdout)) logger.LogDebug("git stdout: {Stdout}", stdout);
+        return stdout;
     }
 }
