@@ -56,7 +56,13 @@ public sealed class GitWikiSync(IConfiguration config, ILogger<GitWikiSync> logg
             logger.LogInformation("Nada para commitar (conteúdo salvo é igual ao já existente).");
             return;
         }
-        await RunGitAsync(_localPath, ct, "commit", "-m", message);
+        // -c user.name/user.email (em vez de depender de `git config --global` já estar setado no
+        // ambiente) — o container de produção nunca teve identidade git configurada, e sem isso
+        // TODO commit falha com "Author identity unknown". Passar via -c cobre qualquer ambiente
+        // (container novo, máquina de dev sem git configurado) sem exigir setup prévio.
+        await RunGitAsync(_localPath, ct,
+            "-c", "user.name=OttoWikiMcp", "-c", "user.email=ottowikimcp@localhost",
+            "commit", "-m", message);
     }
 
     private async Task<string> RunGitAsync(string workingDir, CancellationToken ct, params string[] args)
