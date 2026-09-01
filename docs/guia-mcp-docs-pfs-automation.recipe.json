@@ -1,0 +1,410 @@
+{
+  "$schema": "recipe-v1",
+  "name": "mcp-docs-pfs-automation",
+  "description": "Receita estruturada para um agente de IA replicar, no repositório real do PFS.Automation, o MCP de documentação (leitura + busca + escrita + tags/subpastas + \"perguntar à IA\") validado na POC OttoWikiMcp.",
+  "generated_from": {
+    "poc_repo": "OttoWikiMcp (POC local de referência — MCP server .NET 10 + Semantic Kernel para wiki + docs)",
+    "companion_docs": [
+      "guia-mcp-docs-pfs-automation.md (versão em prosa desta mesma receita)",
+      "poc-otowikimcp-ask-e-escrita.md (retrospectiva do que foi feito na POC e por quê)",
+      "boas-praticas-mcp-docs-rag.md (pesquisa de segurança de tools de escrita + retrieval para RAG)",
+      "arquitetura-wiki-mcp-k8s.md (arquitetura completa de produção: auth, deploy K8s)",
+      "mcp-apis-dinamicas.md (estudo: registrar APIs externas no MCP via config/OpenAPI, sem recompilar — import dinâmico via Semantic Kernel + handlers dinâmicos do SDK do MCP)"
+    ],
+    "date": "2026-08-31",
+    "note": "Este JSON é o companion machine-readable do .md correspondente. Se os dois divergirem no futuro, o .md é a fonte da verdade (mais fácil de manter em prosa); reexporte este JSON a partir dele. Atualizado nesta rodada: títulos humanizados (frontmatter title:), editor de markdown dedicado, adoção incremental de Tailwind CSS v4, filtros/detalhe clicável no Dashboard, página de ferramentas MCP via introspecção por reflection, e duas novas páginas de arquitetura/endpoints na wiki de exemplo. Rodada seguinte: página de arquitetura estilizada dedicada (pages/Arquitetura.tsx) na própria POC, correção de framing da wiki (deixou de simular um clone do Azure DevOps — hoje é uma pasta cuidada diretamente pelo McpServer, podendo ser interna ao próprio repositório), fix de responsividade em tabelas markdown (overflow de página por falta de min-width:0 num grid de 3 colunas), e o estudo de APIs dinâmicas referenciado acima. Rodada mais recente: domínio de fundos de investimento na API de trabalho, RAG real (WikiChunkIndex/TF-IDF + IWikiAnswerGenerator plugável — Gemini/Claude), rate limiting + timeout + auditoria + detecção de conflito de escrita, backlog navegável (pages/Backlog.tsx), auditoria de segurança completa (achou e corrigiu path traversal em get_wiki_page — ver security_checklist abaixo) e primeiro push do código da POC pro GitHub (repo privado)."
+  },
+  "how_to_use": "Cole o conteúdo deste arquivo para o agente de IA que vai executar a implementação real no PFS.Automation, junto com a instrução: 'siga esta receita fase por fase, adaptando nomes/namespaces para o repositório real, e pare em cada resolve_before_continuing para confirmar comigo antes de prosseguir'.",
+  "reference_architecture": {
+    "note": "Isto descreve a arquitetura da POC OttoWikiMcp COMO REFERÊNCIA DE PADRÃO — não é pra ser copiada literalmente pro PFS.Automation. Ver phase P5.3 abaixo: a página de arquitetura do sistema real deve ser gerada lendo o PFS.Automation como ele realmente é, não copiando este diagrama.",
+    "componentes": [
+      "Frontend React SPA servido como arquivos estáticos pelo próprio backend (wwwroot/), sem servidor Node em produção.",
+      "Um processo ASP.NET Core expõe a MESMA lógica de negócio por dois transportes: /mcp (JSON-RPC, Streamable HTTP, pra agentes de IA) e /api/* (REST, pro frontend) — nenhum dos dois duplica a integração com a fonte de dados.",
+      "Semantic Kernel como camada de orquestração: cada domínio (wiki, tickets, fundos/instituições) é um plugin de Kernel; tools MCP e endpoints REST chamam o Kernel, não reimplementam a lógica cada um por si.",
+      "A wiki é uma pasta local versionada em git, cuidada diretamente pelo próprio servidor (pode estar dentro do repositório do próprio serviço ou apontar pra um repositório git externo, ex.: Azure DevOps Wiki, se configurado assim) — NÃO é mais tratada como 'simulação de um clone do Azure DevOps', é a fonte de verdade em si.",
+      "Uma API de trabalho separada (tickets, dados de domínio) representa o tipo de API interna que já existe de verdade numa empresa — o servidor MCP consome, não reimplementa.",
+      "Dados que não mudam a cada request são 'baked' (carregados 1x no startup a partir de uma fonte externa) — só o que precisa ser fresco por request é chamada em tempo real."
+    ],
+    "stack_generico": [
+      { "camada": "Frontend", "papel": "SPA servida como estático pelo backend" },
+      { "camada": "Backend MCP", "papel": "Expõe tools via SDK oficial do MCP, transporte Streamable HTTP" },
+      { "camada": "Orquestração de tools", "papel": "Semantic Kernel — um plugin por domínio" },
+      { "camada": "API de trabalho", "papel": "API interna real da empresa, consumida via HttpClient nomeado" },
+      { "camada": "Persistência da wiki", "papel": "Git — pasta local (interna ao repo ou externa)" },
+      { "camada": "Deploy", "papel": "Container + orquestrador que o time já usa (não introduzir um novo)" }
+    ],
+    "code_reference": "Código completo da POC (referência, privado, acesso pessoal do autor desta receita — não é um dependency do PFS.Automation): https://github.com/GuiOttoni/ottowikimcp"
+  },
+  "security_checklist": {
+    "note": "Checklist derivado de uma auditoria manual real feita na POC antes do primeiro push pro GitHub (repo privado). Um item (path traversal em get_wiki_page) era um bug de verdade, não teórico — encontrado só porque a leitura foi auditada com o mesmo rigor da escrita. Rode esta checklist ANTES de qualquer código deste guia entrar num repositório compartilhado/produção do PFS.Automation, não depois.",
+    "items": [
+      {
+        "categoria": "Path traversal / IDOR em operações de arquivo",
+        "o_que_checar": "TODA função que recebe um `path` vindo de fora (tool MCP ou REST) e o usa pra montar um caminho de arquivo — leitura E escrita — precisa validar que o `Path.GetFullPath` resultante continua dentro da raiz permitida. Extraia UM helper compartilhado (ex.: TryResolveSafePath) em vez de duplicar (ou pior, esquecer) a checagem em cada função nova.",
+        "como_testar": "curl com path=\"../../../../etc/passwd\" (ou equivalente Windows) em CADA endpoint/tool que aceita path — deve devolver erro de caminho inválido, nunca conteúdo de fora da raiz."
+      },
+      {
+        "categoria": "Secrets/API keys",
+        "o_que_checar": "Nenhuma chave (LLM, API interna, etc.) em appsettings.json, k8s manifests versionados, ou qualquer arquivo commitado — só env var / Secret do k8s (ou o cofre de secrets que a empresa já usa) / user-secrets em dev local.",
+        "como_testar": "grep no working tree E no histórico completo do git (`git log --all -p | grep`) por padrões de chave conhecidos (prefixos de provedores de LLM, tokens de API) antes de qualquer push — um secret commitado uma vez e removido depois AINDA está no histórico."
+      },
+      {
+        "categoria": "Rate limiting em endpoints que chamam LLM/API externa com custo",
+        "o_que_checar": "Qualquer endpoint que dispare uma chamada de LLM (ask_wiki ou equivalente) precisa de limite de taxa — sem isso, um uso descuidado (ou um agente em loop) esgota cota/orçamento rápido. Aplicar no serviço compartilhado entre REST e tool MCP, não duplicar a lógica nos dois transportes."
+      },
+      {
+        "categoria": "Timeout + fallback gracioso em chamadas de API externa",
+        "o_que_checar": "HttpClient de qualquer provedor externo (LLM, API de terceiros) precisa de timeout explícito (o default de 100s do .NET é longo demais pra UX) e a falha/timeout deve degradar graciosamente (mock/mensagem clara), nunca travar a request nem devolver 500 cru pro usuário.",
+        "como_testar": "Observado na prática nesta POC: uma chamada real ao provedor de LLM (free tier) levou 76s uma vez — sem timeout configurado, isso ficaria pendurado até o default do framework."
+      },
+      {
+        "categoria": "Auditoria de chamadas de tool",
+        "o_que_checar": "Prefira um ponto de extensão transversal (ex.: IFunctionInvocationFilter do Semantic Kernel, registrado uma vez) a espalhar log manual em cada tool — cobre automaticamente tools novas. Documente honestamente a limitação: sem autenticação por chamador, a auditoria registra O QUÊ/QUANDO, não O QUEM (ver decisão de autenticação, seção 6 do guia)."
+      },
+      {
+        "categoria": "XSS em conteúdo renderizado a partir de dados editáveis",
+        "o_que_checar": "Se o frontend renderiza HTML/SVG a partir de conteúdo que um usuário ou agente pode escrever (markdown da wiki, resposta de LLM, diagramas), NÃO habilite `rehype-raw` (permite HTML bruto em markdown) e, se usar mermaid, configure `securityLevel: \"strict\"` — mermaid sanitiza o SVG gerado nesse modo antes de qualquer `dangerouslySetInnerHTML`."
+      },
+      {
+        "categoria": "Exposição de stack trace",
+        "o_que_checar": "Confirmar que a página de erro detalhada (developer exception page) só aparece com ASPNETCORE_ENVIRONMENT=Development — nunca setar essa variável no deploy real. Testar com uma request que gera exceção contra o ambiente implantado, não só localmente."
+      },
+      {
+        "categoria": "IDOR / controle de acesso por objeto",
+        "o_que_checar": "Esta POC não tem autenticação por usuário — IDOR não é 'resolvido', é uma limitação conhecida e documentada (não confundir as duas coisas). Antes de expor qualquer tool de leitura/escrita a múltiplos usuários com permissões diferentes no PFS.Automation, resolver a decisão de autenticação primeiro (não adicionar controle de acesso por cima de um sistema sem identidade de chamador — vira falsa sensação de segurança)."
+      }
+    ]
+  },
+  "non_negotiable_constraints": [
+    "Stack é .NET (ASP.NET Core) no backend — não introduzir Node.js como runtime de produção. Vite só roda no build do frontend.",
+    "Não duplicar o conteúdo da wiki num banco à parte — a Wiki (Azure DevOps ou onde os .md morarem) continua sendo a única fonte de verdade do conteúdo.",
+    "Não expor o endpoint MCP publicamente sem autenticação — no mínimo token de time + rede interna/VPN antes de produção.",
+    "Não fazer push automático pra wiki real sem antes decidir push-direto vs. fluxo de PR (ver decision D2).",
+    "Não escolher o LLM do 'ask' sem antes confirmar com o time o que a empresa já tem contratado (ver decision D1) — não assumir Azure OpenAI ou Anthropic por padrão.",
+    "Área de documentação deve viver dentro da navegação existente do PFS.Automation, em rota própria (ex.: /docs) — não como aba dentro de outra tela, não como app/site separado.",
+    "Deploy deve usar o pipeline de CI/CD e registry que o PFS.Automation já tiver — nunca transferência manual de imagem (docker save/scp/ssh) num ambiente real.",
+    "NUNCA escrever código de implementação (fases P1+) antes de completar P0.5 (reconhecimento de convenções da plataforma) — a POC é referência de lógica/decisão, não um molde de estilo/estrutura pra copiar por cima das convenções que o PFS.Automation já tem."
+  ],
+  "phases": [
+    {
+      "id": "P0",
+      "title": "Reconhecimento do repositório real",
+      "goal": "Confirmar fatos sobre o PFS.Automation antes de escrever qualquer código — a POC assume um layout, o real pode diferir.",
+      "prompts": [
+        "Liste os projetos .csproj do solution do PFS.Automation e identifique qual já hospeda (ou deveria hospedar) endpoints ASP.NET Core públicos.",
+        "Procure por 'ModelContextProtocol' ou 'MapMcp' no repositório — já existe algum servidor MCP?",
+        "Onde a documentação do time já vive hoje? Existe uma Wiki do Azure DevOps ligada a este projeto? Qual a URL git dela (https://dev.azure.com/{org}/{project}/_git/{project}.wiki)?",
+        "A criação de PAT (Personal Access Token) é bloqueada pela política da empresa? (determina se GitWikiSync usa git-do-sistema-sem-PAT como na POC, ou se pode simplificar com um PAT direto)",
+        "O PFS.Automation já roda atrás de login Entra ID/Azure AD? Onde fica essa configuração?",
+        "Existe um pipeline de CI/CD (Azure Pipelines) que já builda e publica imagens num registry (ACR)? Qual o padrão de deploy (Helm, manifests brutos, GitOps)?"
+      ],
+      "resolve_before_continuing": [
+        "D_WIKI_LOCATION: pasta própria no repo vs. Wiki separada do Azure DevOps",
+        "D_PAT_POLICY: PAT permitido ou bloqueado"
+      ],
+      "outputs_expected": "Um resumo curto de cada resposta acima, guardado como contexto para as fases seguintes."
+    },
+    {
+      "id": "P0.5",
+      "title": "Reconhecimento de convenções da plataforma (mandatório, bloqueia P1+)",
+      "goal": "Garantir que o código novo siga os padrões já estabelecidos no PFS.Automation em vez de importar as convenções da POC 1:1. Diferente de P0 (fatos de sim/não), isto é leitura de código real.",
+      "mandatory": true,
+      "blocks": ["P1", "P2", "P3", "P4", "P5", "P6", "P7"],
+      "prompts": [
+        "Leia os manifests de Kubernetes já usados pelo PFS.Automation (Deployment/Service/Ingress, ou Helm chart) — probes, requests/limits, padrão de nomes/labels/namespace, variáveis de ambiente. Qualquer manifest novo deve seguir esse padrão, não o dos k8s/*.yaml da POC.",
+        "Entenda a arquitetura de negócio/domínio já modelada pelo PFS.Automation (entidades, fluxos, APIs internas existentes) antes de decidir onde a documentação e o MCP se encaixam — reaproveite nomenclatura de domínio já existente, não invente termos novos pra conceitos que já têm nome.",
+        "Identifique como o frontend do PFS.Automation já é estilizado: design system, tokens de cor/tema, biblioteca de componentes, lib de roteamento já em uso. A nova área de documentação deve seguir esse padrão visual — NÃO replicar o tema/CSS da POC (era só identidade visual da POC, não requisito de produto).",
+        "Confirme o padrão de organização de projeto/pastas já usado no solution (onde ficam Services/Controllers/Tools por convenção) antes de decidir onde colocar os arquivos novos."
+      ],
+      "outputs_expected": "Um resumo dos 4 pontos acima, específico do PFS.Automation real (não genérico), usado para adaptar (não copiar) os passos das fases seguintes.",
+      "note": "Sempre que uma fase abaixo disser 'copie o padrão de [arquivo da POC]', isso significa replicar a LÓGICA e a DECISÃO DE DESIGN, nunca a formatação/estilo/estrutura de projeto literalmente."
+    },
+    {
+      "id": "P1",
+      "title": "Backend: leitura, busca, subpastas, tags",
+      "goal": "Tools MCP read-only funcionando, com suporte nativo a subpastas e tags via frontmatter.",
+      "reference_files": [
+        "src/OttoWikiMcp.McpServer/Services/GitWikiSync.cs",
+        "src/OttoWikiMcp.McpServer/Plugins/WikiPlugin.cs",
+        "src/OttoWikiMcp.McpServer/Tools/WikiTools.cs",
+        "src/OttoWikiMcp.McpServer/Program.cs"
+      ],
+      "steps": [
+        "Criar GitWikiSync equivalente: clona/atualiza via processo `git` do sistema operacional (não lib .NET com token), respeitando D_PAT_POLICY.",
+        "Criar WikiPlugin com [KernelFunction] search_wiki, get_wiki_page, list_wiki_pages — EnumeratePages deve usar SearchOption.AllDirectories (subpastas de graça).",
+        "Adicionar WikiPlugin.ParseTags: parser minimalista de frontmatter (```---\\ntags: [a, b]\\n---``` no topo do arquivo) — não implementar YAML completo a menos que já exista necessidade real.",
+        "Adicionar list_wiki_pages_json (função de Kernel, NÃO exposta como tool MCP) para o frontend consumir path+tags estruturado.",
+        "Adicionar WikiPlugin.ParseTitle(content): título humanizado por página, checando primeiro um `title:` na frontmatter (com aspas removidas) e caindo para o primeiro `# heading` do corpo se não houver — sem isso, nomes de arquivo tipo 'Visao-Geral' aparecem crus na UI em vez de 'Visão Geral'. Incluir `title` no retorno de list_wiki_pages_json.",
+        "Registrar Kernel + plugin + AddMcpServer().WithHttpTransport().WithTools<WikiTools>() em Program.cs, MapMcp(\"/mcp\")."
+      ],
+      "prompts": [
+        "Implemente GitWikiSync, WikiPlugin (search_wiki/get_wiki_page/list_wiki_pages/list_wiki_pages_json/ParseTags) e WikiTools seguindo exatamente o padrão de {reference_files}, adaptando o namespace para o do PFS.Automation. Não mude a lógica de negócio, só nomes/estrutura de projeto."
+      ],
+      "verification": [
+        "dotnet build passa sem erros",
+        "POST /mcp com {\"method\":\"tools/list\"} retorna search_wiki, get_wiki_page, list_wiki_pages",
+        "Uma página de teste em subpasta (ex.: Area/Subarea.md) aparece com o path correto contendo '/'",
+        "Uma página de teste com frontmatter de tags aparece como 'path [tag1, tag2]' na saída de list_wiki_pages"
+      ],
+      "concerns": [
+        "Não deixar o parser de frontmatter tentar validar YAML genérico — escopo mínimo, documentado como tal.",
+        "Confirmar que EnumeratePages ignora a pasta .git do clone.",
+        "SEGURANÇA — BUG REAL ENCONTRADO NA POC: get_wiki_page não tinha a mesma validação de path traversal que update_wiki_page (P2) já tinha — '../../algo' conseguia escapar da raiz da wiki numa LEITURA (path traversal não é só risco de escrita). Implemente get_wiki_page e update_wiki_page usando o MESMO helper de validação de path desde o início (ver security_checklist no topo deste arquivo) — não implemente a validação só na tool de escrita e assuma que leitura é 'só leitura, sem risco'."
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Backend: escrita (update_wiki_page)",
+      "goal": "Permitir criar/editar páginas via tool MCP e endpoint REST, com commit git real e validação de path.",
+      "reference_files": [
+        "src/OttoWikiMcp.McpServer/Services/GitWikiSync.cs (CommitAllAsync)",
+        "src/OttoWikiMcp.McpServer/Plugins/WikiPlugin.cs (UpdateWikiPage)"
+      ],
+      "steps": [
+        "GitWikiSync.CommitAllAsync: git add -A, checar `git status --porcelain` (pular commit se vazio, evita falha 'nothing to commit'), git commit -m.",
+        "WikiPlugin.UpdateWikiPage(path, content): normalizar path, checar Path.GetFullPath resultante começa com a raiz da wiki (rejeitar '../' escaping), criar diretórios se necessário, escrever arquivo, chamar CommitAllAsync.",
+        "Expor como [McpServerTool] update_wiki_page e endpoint REST PUT /api/wiki/page.",
+        "DECISÃO REQUERIDA (D2, ver open_decisions): adicionar GitWikiSync.PushAsync depois do commit, SE for pra Wiki real do Azure DevOps. Push direto vs. push-pra-branch+PR — não implementar sem essa decisão."
+      ],
+      "prompts": [
+        "Implemente update_wiki_page seguindo {reference_files}. NÃO implemente o git push ainda — pare e pergunte ao usuário sobre D2 (push direto vs. fluxo de PR) antes de escrever esse código."
+      ],
+      "verification": [
+        "PUT /api/wiki/page com {path, content} grava o arquivo",
+        "git log -1 no clone local mostra um commit novo com mensagem 'docs: atualiza {path}'",
+        "Uma tentativa de path malicioso (ex.: '../../etc/passwd') é rejeitada, não escreve fora da raiz"
+      ],
+      "concerns": [
+        "Sem detecção de conflito de escrita concorrente na POC — duas edições simultâneas se sobrescrevem. Ver improvements_backlog item sobre optimistic concurrency se isso for um requisito real.",
+        "git commit precisa de user.name/user.email configurados no ambiente onde o processo roda."
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "API auxiliar de tickets/instituições",
+      "goal": "Expor dados reais de tickets/instituições como tools MCP, sem duplicar a integração já existente na empresa.",
+      "reference_files": [
+        "src/OttoWikiMcp.WorkApiMock (formato de referência, dados fake)",
+        "src/OttoWikiMcp.McpServer/Tools/WorkApiTools.cs"
+      ],
+      "steps": [
+        "Identificar a(s) API(s) internas reais de tickets/instituições da empresa.",
+        "Adaptar WorkApiTools para chamar essas APIs via IHttpClientFactory nomeado (AddHttpClient(\"WorkApi\", ...)), trocando só BaseUrl e os DTOs de resposta."
+      ],
+      "prompts": [
+        "Adapte WorkApiTools.cs para consumir a API real de tickets/instituições em {URL_REAL}, mantendo a mesma forma de tools MCP (list_tickets, get_ticket, list_institutions, get_institution) mas com os DTOs reais dessa API."
+      ],
+      "verification": ["list_tickets/get_ticket/list_institutions/get_institution retornam dados reais, não mock"]
+    },
+    {
+      "id": "P4",
+      "title": "\"Perguntar à IA\" (ask_wiki) — mock com ponto de extensão",
+      "goal": "Ter o fluxo pergunta -> busca -> resposta com citação funcionando, com o LLM real como decisão explícita e não bloqueante.",
+      "reference_files": ["src/OttoWikiMcp.McpServer/Services/WikiAskService.cs"],
+      "steps": [
+        "Implementar WikiAskService.AskAsync(question) como MOCK: reusa search_wiki, monta resposta template citando as páginas encontradas.",
+        "Extrair IWikiAnswerService (Task<WikiAnswer> AskAsync(string question, CancellationToken ct)) para permitir trocar a implementação via DI sem mudar tools/endpoints.",
+        "Expor como [McpServerTool] ask_wiki e endpoint REST POST /api/wiki/ask.",
+        "NÃO implementar um LLM real sem antes resolver D1 (qual motor de IA)."
+      ],
+      "prompts": [
+        "Implemente WikiAskService como mock determinístico (sem chamar nenhum LLM), seguindo {reference_files}. Extraia a interface IWikiAnswerService. Pare e pergunte ao usuário sobre D1 antes de integrar qualquer LLM real."
+      ],
+      "verification": [
+        "ask_wiki com um termo presente na wiki retorna o trecho certo citando a página",
+        "ask_wiki com um termo ausente retorna uma mensagem clara de 'não encontrei'"
+      ],
+      "concerns": [
+        "CONFIRMADO NA POC: busca por substring erra perguntas parafraseadas mesmo quando a resposta existe na wiki (ex.: 'como declarar um incidente' não encontra, mas 'incident commander' encontra a mesma página). Retrieval é o gargalo real, não o LLM — ver improvements_backlog item 1 antes de investir só na troca do LLM."
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "Frontend: área de documentação em rota própria",
+      "goal": "Uma seção /docs (ou path equivalente) dentro da navegação existente do PFS.Automation, não misturada com outras telas.",
+      "reference_files": [
+        "src/OttoWikiMcp.Frontend/src/Layout.tsx",
+        "src/OttoWikiMcp.Frontend/src/App.tsx",
+        "src/OttoWikiMcp.Frontend/src/pages/Docs.tsx",
+        "src/OttoWikiMcp.Frontend/src/pages/Dashboard.tsx",
+        "src/OttoWikiMcp.Frontend/src/ui.tsx",
+        "src/OttoWikiMcp.Frontend/src/api.ts",
+        "src/OttoWikiMcp.Frontend/src/index.css (dual-token Tailwind: :root custom properties + @theme)"
+      ],
+      "steps": [
+        "Adicionar react-router-dom (ou reusar o router que o PFS.Automation já usa, se houver).",
+        "Criar rota /docs/* cuja página lê o caminho da wiki via useParams()['*'] e navega via useNavigate() ao abrir uma página (URL deve refletir a página aberta, compartilhável).",
+        "Renderizar árvore de páginas agrupada por pasta (não lista plana) com chips de tag clicáveis pra filtrar; label de cada folha usa o `title` de list_wiki_pages_json (fallback: humanizar o nome do arquivo — remover '-', separar camelCase) em vez do path cru.",
+        "Renderizar o conteúdo com react-markdown + remark-gfm + rehype-highlight (renderiza pra componentes React reais, não dangerouslySetInnerHTML) + mermaid via import dinâmico para blocos ```mermaid; esconder o frontmatter só na exibição, mantendo-o no modo de edição (round-trip sem perda).",
+        "No modo de edição, usar uma lib de editor markdown madura (ex.: @uiw/react-md-editor) com preview em split-pane, em vez de <textarea> cru.",
+        "Adotar Tailwind CSS v4 (@tailwindcss/vite) de forma incremental sobre os tokens CSS já existentes: manter os `var(--...)` em :root para os estilos inline já escritos e espelhar os mesmos valores num bloco @theme (--color-*) para as novas classes utilitárias — evita reescrever centenas de estilos inline de uma vez.",
+        "No backend, adicionar app.MapFallbackToFile(\"index.html\") depois dos outros Map* — sem isso, refresh direto em /docs/Algo cai em 404."
+      ],
+      "prompts": [
+        "Adicione roteamento client-side de forma que a documentação vire uma seção própria em /docs dentro do app existente do PFS.Automation, seguindo o padrão de {reference_files}: árvore de páginas com subpastas, tags e títulos humanizados, conteúdo em markdown estilizado (com mermaid) com um editor dedicado, e um card de pergunta à IA. Confirme que o backend serve index.html como fallback para rotas client-side."
+      ],
+      "verification": [
+        "Navegar para /docs muda a URL e mostra a árvore de páginas",
+        "Abrir uma página aninhada (Area/Subarea) atualiza a URL para /docs/Area/Subarea",
+        "Dar refresh do navegador nessa URL direta funciona (não dá 404)",
+        "Filtrar por uma tag mostra só as páginas com aquela tag",
+        "Um arquivo tipo 'Visao-Geral.md' aparece na árvore/breadcrumb como 'Visão Geral' (via title: na frontmatter), não com hífen cru"
+      ],
+      "decision_note": "D3 (ver open_decisions): NÃO usar Docusaurus nem Wiki.js aqui — ambos quebram a integração no mesmo app (Docusaurus é build-time estático, Wiki.js é uma aplicação/banco à parte). Manter renderer próprio (react-markdown/remark/rehype, mesma família do MDX do Docusaurus, sem trocar a arquitetura)."
+    },
+    {
+      "id": "P5.1",
+      "title": "Frontend: Dashboard com filtros e detalhe clicável",
+      "goal": "Tornar tabelas grandes (fundos, instituições) navegáveis: filtro por texto/tipo/papel e um painel de detalhe ao clicar numa linha, sem sair da página.",
+      "reference_files": ["src/OttoWikiMcp.Frontend/src/pages/Dashboard.tsx"],
+      "steps": [
+        "Adicionar estado de filtro (texto livre + selects de categoria) e derivar a lista exibida via useMemo, sem tocar na chamada de API original.",
+        "Envolver cada tabela grande num container com classe utilitária de scroll (ex.: `.table-scroll { overflow-x: auto } .table-scroll table { min-width: ... }`) para não quebrar em telas estreitas.",
+        "Estilizar a scrollbar globalmente (scrollbar-width/scrollbar-color + ::-webkit-scrollbar*) em vez da barra padrão do SO/navegador.",
+        "Tornar a linha da tabela clicável (onClick abre um card de detalhe abaixo, com highlight de hover/seleção) — buscar dados adicionais (ex.: histórico) só quando o item é aberto, não no carregamento inicial da lista."
+      ],
+      "verification": [
+        "Filtrar por tipo/papel reduz a contagem de linhas exibidas corretamente",
+        "Clicar numa linha abre um painel de detalhe com dados que não estavam na lista (ex.: histórico), buscados sob demanda",
+        "Tabelas largas rolam horizontalmente dentro do próprio container em vez de estourar a página"
+      ]
+    },
+    {
+      "id": "P5.2",
+      "title": "Frontend + backend: página de ferramentas MCP autodocumentada",
+      "goal": "Uma página /mcp-tools que lista todas as tools MCP registradas com descrição/parâmetros, sempre sincronizada com o código real (sem lista mantida à mão que fica desatualizada).",
+      "reference_files": [
+        "src/OttoWikiMcp.McpServer/Endpoints/McpInfoEndpoints.cs",
+        "src/OttoWikiMcp.Frontend/src/pages/McpTools.tsx"
+      ],
+      "steps": [
+        "Backend: endpoint GET /api/mcp/tools que usa reflection sobre as classes de tools (Type.GetMethods + GetCustomAttribute<McpServerToolAttribute>()/DescriptionAttribute) para montar nome, descrição, categoria e parâmetros (nome/tipo amigável/obrigatório) de cada tool — nunca escrever essa lista manualmente, ela se desatualiza no primeiro método novo.",
+        "Frontend: página que busca essa lista, agrupa por categoria, renderiza cards clicáveis; ao clicar, um modal mostra a descrição completa, tabela de parâmetros e um exemplo de chamada JSON-RPC (tools/call) gerado a partir dos mesmos dados."
+      ],
+      "verification": [
+        "GET /api/mcp/tools retorna todas as tools realmente registradas, sem precisar editar a lista ao adicionar uma tool nova",
+        "Clicar num card abre um modal com os parâmetros corretos e um exemplo de chamada válido"
+      ]
+    },
+    {
+      "id": "P5.3",
+      "title": "Frontend: página de arquitetura estilizada, GERADA A PARTIR DO ESTADO REAL DO SISTEMA",
+      "goal": "Uma página /arquitetura (analógica a pages/Arquitetura.tsx desta POC) que descreve o PFS.Automation como ele REALMENTE é — stack, componentes, o que está por trás de cada API, tools MCP — nunca um diagrama copiado da POC.",
+      "reference_files": [
+        "src/OttoWikiMcp.Frontend/src/pages/Arquitetura.tsx (estrutura de referência: Card + MermaidDiagram + tabela de stack + seções de bullets)",
+        "src/OttoWikiMcp.Frontend/src/MermaidDiagram.tsx (componente compartilhado de renderização de diagrama)"
+      ],
+      "mandatory_reading_before_writing": [
+        "Leia TODOS os .csproj/.sln do repositório real (ou package.json equivalente) pra listar a stack técnica de verdade — não assuma que é igual à desta POC.",
+        "Leia Program.cs (ou equivalente) de cada serviço pra ver o que está REALMENTE registrado: quais plugins de Kernel, quais Controllers/Minimal APIs, quais HttpClient nomeados apontando pra quais APIs internas.",
+        "Leia os manifests de deploy reais (k8s/Helm/pipeline) pra descrever a topologia de deploy real, não 'Docker + k3s' só porque foi assim na POC.",
+        "Chame o endpoint GET /api/mcp/tools (equivalente ao McpInfoEndpoints.cs desta POC — se essa fase P5.2 já foi feita) do sistema REAL rodando, pra listar as tools de verdade — não copie a lista de tools da POC.",
+        "Se a fase de APIs dinâmicas (ver mcp-apis-dinamicas.md) já tiver sido implementada, a página de arquitetura deve listar também as APIs registradas dinamicamente (via o registro/config), não só as escritas à mão."
+      ],
+      "steps": [
+        "Monte o diagrama Mermaid (componentes + setas) a partir do que foi lido acima — pode seguir a MESMA linguagem visual da POC (Cliente/Cluster/Externo como subgraphs), mas os nós e conexões devem refletir os serviços/componentes reais.",
+        "Monte a tabela de stack técnica com as tecnologias REAIS confirmadas na leitura, não a lista da POC.",
+        "Inclua uma seção 'Como evoluir esta arquitetura' com 3 blocos (mesmo padrão da POC, adaptado): como trazer informação de outros modelos/agentes (via MCP como protocolo comum + mais plugins de Kernel), como evoluir a arquitetura como um todo (mesmo padrão de domínio → plugin+tool+endpoint, e o próximo passo de registro dinâmico via config em vez de código — referenciar mcp-apis-dinamicas.md), e como evoluir o RAG (busca híbrida lexical+embeddings via conectores de memória do Semantic Kernel, referenciar boas-praticas-mcp-docs-rag.md).",
+        "NÃO reutilize os textos da POC literalmente nessas 3 seções — adapte pros componentes/decisões reais do PFS.Automation identificados na leitura."
+      ],
+      "verification": [
+        "Toda tecnologia/componente citado na página bate com o que foi de fato encontrado no código real, não com a POC",
+        "A lista de tools do diagrama/seções bate com o retorno real de GET /api/mcp/tools do sistema real",
+        "Um novo componente adicionado ao sistema real (ex.: uma API nova registrada) pode ser refletido reexecutando esta fase — a página não é estática, é derivada do estado atual"
+      ],
+      "concerns": [
+        "Esta fase é a que mais tende a virar 'copiar a POC' por preguiça — o mandatory_reading_before_writing existe justamente pra isso não acontecer. Um agente que pular a leitura e só adaptar nomes vai produzir uma página enganosa."
+      ]
+    },
+    {
+      "id": "P6",
+      "title": "Autenticação",
+      "goal": "Não deixar o endpoint MCP nem a área de docs abertos sem controle de acesso.",
+      "steps": [
+        "Frontend: reusar login Entra ID já existente no PFS.Automation, se houver.",
+        "MCP: token de time + rede interna/VPN como MVP; evoluir para OAuth per-user via Microsoft.Identity.Web quando o uso crescer."
+      ],
+      "reference_doc": "arquitetura-wiki-mcp-k8s.md, seção 7 (autenticação — o ponto mais delicado)"
+    },
+    {
+      "id": "P7",
+      "title": "Deploy",
+      "goal": "Implantar sem transferência manual de imagem — usar o que o PFS.Automation já tem.",
+      "steps": [
+        "Confirmar se já existe pipeline CI/CD com registry (provavelmente Azure Pipelines -> ACR).",
+        "Se existir: só adicionar/ajustar os passos de build para incluir as mudanças de backend/frontend acima, sem criar infraestrutura de deploy nova.",
+        "Se não existir (cenário improvável num projeto já em produção): NÃO replicar o script scp/ssh/ctr-import que a POC abandonou. Configurar publicação num registry que o cluster já confia (ACR/Docker Hub/GHCR) e imagePullPolicy: Always + rollout restart, como na versão final da POC (scripts/deploy.sh)."
+      ],
+      "anti_pattern": "docker save + scp + ssh + k3s ctr images import manual — abandonado na POC depois de causar retrabalho real (chaves SSH, tar corrompido). Não reintroduzir isso num ambiente real."
+    },
+    {
+      "id": "P8",
+      "title": "Conectar como MCP real e testar",
+      "goal": "Validar com um cliente MCP de verdade, não só simulando o protocolo via curl.",
+      "steps": [
+        "claude mcp add --transport http --scope user <nome> http://<host>/mcp (--scope user evita amarrar ao diretório de um projeto específico).",
+        "Reiniciar a sessão do cliente MCP (uma sessão já aberta não recarrega servidores novos sozinha).",
+        "Chamar pelo menos uma tool de cada categoria: leitura, busca, escrita (confirmar commit git depois), ask (um termo com match e um sem)."
+      ],
+      "verification": [
+        "Todas as tools esperadas aparecem via tools/list de um cliente MCP real",
+        "Uma chamada de escrita real gera commit visível no histórico git",
+        "ask_wiki com e sem match retorna as duas respostas esperadas"
+      ]
+    }
+  ],
+  "open_decisions": [
+    {
+      "id": "D1",
+      "question": "Qual motor de IA usar no ask_wiki real (substituindo o mock)?",
+      "options": ["LLM interno já contratado pela empresa", "Azure OpenAI", "API da Anthropic direto"],
+      "default_if_undecided": "Manter o mock (WikiAskService determinístico) — nunca integrar um LLM real sem essa decisão."
+    },
+    {
+      "id": "D2",
+      "question": "Escrita na wiki real: push direto pra branch principal ou push-pra-branch + PR de revisão?",
+      "options": ["Push direto (conteúdo de baixo risco: runbooks, onboarding)", "Branch + PR via API do Azure DevOps (conteúdo de peso de processo oficial)"],
+      "default_if_undecided": "Não implementar git push nenhum — manter escrita só no clone local, como a POC."
+    },
+    {
+      "id": "D3",
+      "question": "Manter renderer de documentação próprio (React/marked) ou considerar Docusaurus/Wiki.js?",
+      "resolution": "Manter renderer próprio — decidido nesta rodada. Motivo: ambos exigem quebrar a integração no mesmo app (ver phase P5 decision_note). Reabrir só se o requisito de 'tudo dentro do mesmo app' mudar."
+    },
+    {
+      "id": "D4",
+      "question": "Onde os arquivos .md da documentação devem morar?",
+      "options": ["Pasta própria no repo do PFS.Automation", "Wiki separada do Azure DevOps (git remoto próprio)"],
+      "depends_on": "Se documentação não-dev (QA, produto) precisa editar via UI nativa do Azure DevOps, ou se times fora do repo do PFS.Automation também consomem essa doc."
+    },
+    {
+      "id": "D5",
+      "question": "Registro de APIs no MCP: continuar escrevendo uma classe [McpServerTool] por API (como WorkApiTools desta POC), ou investir num registro dinâmico via OpenAPI (ver mcp-apis-dinamicas.md)?",
+      "options": [
+        "Manter estático (WorkApiTools-like) — mais simples e rápido pra 1-2 APIs internas",
+        "Registro dinâmico via config + import de OpenAPI (Semantic Kernel ImportPluginFromOpenApiAsync + handlers dinâmicos do SDK do MCP) — compensa a partir de ~3-4 APIs internas diferentes, ou quando o time de plataforma quiser adicionar API nova sem depender de deploy do MCP"
+      ],
+      "default_if_undecided": "Manter estático — o registro dinâmico tem uma fase de implementação própria (ver mcp-apis-dinamicas.md, faseado com estimativa de tokens), não é obrigatório pra um MVP funcionar."
+    }
+  ],
+  "improvements_backlog": [
+    { "priority": 1, "item": "Retrieval híbrido (lexical BM25 + embeddings) em vez de busca por substring", "why": "~80% das falhas de RAG vêm da recuperação, não do LLM; substring erra perguntas parafraseadas mesmo com a resposta presente na wiki (confirmado na POC)." },
+    { "priority": 2, "item": "Auditoria de chamadas de tool (quem/quando chamou update_wiki_page e ask_wiki)", "why": "Autor do commit git hoje é sempre a identidade do processo, não da pessoa por trás do agente." },
+    { "priority": 3, "item": "Controle de acesso por tool/role, não só por acesso ao servidor MCP", "why": "Evita o problema de 'confused deputy' — leitura não deveria implicar escrita." },
+    { "priority": 4, "item": "Detecção de conflito de escrita concorrente (optimistic concurrency via hash do conteúdo lido)", "why": "Hoje duas edições simultâneas na mesma página se sobrescrevem silenciosamente." },
+    { "priority": 5, "item": "[FEITO na POC] Renderer de markdown mais rico (react-markdown + remark-gfm + rehype-highlight + mermaid, em vez de marked/dangerouslySetInnerHTML)", "why": "Syntax highlighting, GFM (tabelas/listas de tarefa), diagramas mermaid e renderização como componentes React reais em vez de HTML injetado." },
+    { "priority": 6, "item": "Tool dedicada list_wiki_tags()", "why": "Hoje as tags só aparecem embutidas em list_wiki_pages; uma tool própria facilita descoberta de categorias por um agente." },
+    { "priority": 7, "item": "Rate limiting em ask_wiki", "why": "Necessário antes de abrir acesso amplo, especialmente depois de trocar o mock por um LLM real com custo por chamada." },
+    { "priority": 8, "item": "Visualizador de diff/histórico na própria UI", "why": "Hoje só dá pra ver mudanças via git log no terminal; uma tela de histórico por página melhora a experiência de quem não usa git no dia a dia." }
+  ],
+  "lessons_learned_from_poc_execution": [
+    "docker save gerando dois .tar com o mesmo conteúdo por engano (corrupção silenciosa) — sempre confira o tamanho em bytes depois de exportar/transferir uma imagem, não confie no tamanho arredondado (ls -lh).",
+    "Consoles web/KVM de VPS podem comer caracteres especiais (>>, |) ao colar comandos — prefira comandos de uma linha só sem redirecionamento quando depender de copiar/colar num console desses; ou resolva via linguagem de script (ex.: python3 -c) em vez de shell redirection.",
+    "MCP registrado com `claude mcp add` não aparece numa sessão já aberta — é preciso reiniciar a sessão do cliente.",
+    "Escopo local (padrão) de `claude mcp add` amarra ao diretório do projeto onde o comando rodou — se a sessão que for usar mora em outro diretório, use --scope user.",
+    "SPA com rotas client-side precisa de fallback explícito no backend (MapFallbackToFile) — sem isso, refresh direto numa rota tipo /docs/Algo quebra.",
+    "NUNCA reexecutar um script de seed/geração de conteúdo (ex.: seed-fake-wiki.sh) depois que o conteúdo que ele gera passou a ser editado manualmente por fora dele — o script tem os heredocs antigos hardcoded e um `rm -rf` + recriação apaga silenciosamente todo o conteúdo editado depois. Antes de rodar um script assim de novo, sincronize manualmente o conteúdo dele com o estado atual real, ou não rode — não existe 'só pra testar reprodutibilidade' seguro nesse tipo de script.",
+    "Título de página != nome de arquivo: um parser de frontmatter (title:) com fallback pro primeiro '# heading' do corpo resolve a exibição sem exigir que todo arquivo tenha o título certo desde o início; sem isso a UI mostra nomes crus tipo 'Visao-Geral' em vez de 'Visão Geral'.",
+    "Adoção de um framework de CSS utilitário (Tailwind) num app que já tem centenas de estilos inline baseados em custom properties não precisa ser 'tudo de uma vez' — manter os dois tokens (CSS var + @theme) com os mesmos valores permite migrar pedaço por pedaço sem quebrar nada, e ainda serve pra re-temar o app inteiro trocando só os valores num lugar."
+  ]
+}
